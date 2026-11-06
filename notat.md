@@ -72,7 +72,7 @@ Ligger i `/path/to/backups/original/` (NAS). Macen hadde ikke nok ledig plass.
 
 ---
 
-## 4. Første og eneste skriving til speilet: `misc`
+## 4. Første skriving til speilet: `misc` (nullstilling)
 
 Mål: få recovery til å nullstille `userdata`, slik rapportens kapittel 5 beskriver, for å få root-adb.
 
@@ -112,26 +112,132 @@ ingenting kunne ses uansett hvilken modus speilet var i.
   blokkerte USB, ikke nødvendigvis fordi vinduet var lukket. Rapporten sier at
   adb (med root) var tilgjengelig her.
 
-### Der vi står nå
+## 6. Andre skriving: `boot-recovery` uten wipe (forsøk på root-adb)
 
-`boot-recovery` er skrevet til de samme 4 sektorene i `misc`, **uten**
-`--wipe_data`, og tilbakelest som identisk. Målet er å starte i speilets egen
-recovery, der kiosk-appen ikke kjører og derfor ikke kan sperre adb. Bygget er
-`userdebug`, så recovery bør gi root-adb. Ikke prøvd ennå.
+Mål: starte i speilets egen recovery, der kiosk-appen ikke kjører og derfor ikke
+kan sperre adb. Bygget er `userdebug`, så recovery bør kunne gi root-adb.
+
+Skrevet samme 4 sektorer (32768–32771) på nytt, denne gangen bare
+`boot-recovery` på offset 0 og **ingen** `recovery\n...`-argumenter. Bekreftet
+null før skriving, tilbakelest identisk etter. Deretter `rkdeveloptool rd`.
+
+**Resultat (det viktigste funnet i denne økta):**
+
+```
+Reset Device OK.
+[3s] usb=1   [6s] usb=0   [9s] usb=0
+[12s] ADB: MIRROR_SERIAL	recovery
+```
+
+adb **nådde** speilet i recovery-modus rundt 12 sekunder etter omstart, men
+enheten var borte før neste kommando rakk å kjøre. 120 sekunder med polling
+etterpå fant ingenting: `adb=''`, `usb=0`, `maskrom=0`.
+
+Da recovery-**menyen** sto på skjermen, var det fortsatt **ingen USB-enhet i det
+hele tatt** på Macen — ingen `0x2207` i `system_profiler`, ingenting i
+`adb devices`, og `rkdeveloptool ld` svarte «not found any devices!».
+
+**Tolkning:** recovery slår på adbd tidlig i oppstarten, men USB forsvinner når
+menyen tar over skjermen. Recovery i ro, med menyen framme, eksponerer altså
+ingenting. Vinduet er reelt, men bare noen sekunder langt, og det er helt i
+starten — før menyen.
 
 ---
 
-## 6. Neste steg
+## 7. Der vi står nå (2026-11-06)
 
-1. **Start speilet** (vanlig oppstart, ikke maskrom). BCB-en i `misc` sender det
-   til recovery. Se etter `recovery` i `adb devices`.
-2. **Virker ikke recovery-adb:** start normalt i stedet og se om adb dukker opp nå
-   som macOS slipper USB gjennom. Vinduet er sannsynligvis rett etter en
-   nullstilling, før kiosk-appen er ferdig provisjonert.
-3. **Med adb:** følg rapportens kapittel 5, altså slett
-   `/data/system/device_owner_2.xml` og `device_policies.xml`, merk
-   `com.mentra.launcher` avinstallert for bruker 0 i `package-restrictions.xml`,
-   og skjul APK-en på `/odm` med en overlay (`adb remount` + whiteout).
+- Speilet står i **recovery-menyen**. Ingen USB.
+- `misc` er tømt av recovery igjen (den rydder BCB-en etter seg).
+- Kiosk-låsen er **ikke** fjernet. En nullstilling er kjørt, og kiosk-appen kom
+  tilbake fra `/odm`, nøyaktig som rapportens kapittel 5 forutsier.
+- Full verifisert backup finnes (kapittel 3), **men bare på NAS-en**.
+- Macens USB-tillatelse må stå på **Alltid**, ellers ser man ingenting uansett.
+
+---
+
+## 8. Neste steg
+
+### A. Beste neste forsøk: send recovery rett i sideload
+
+I stedet for å jage et vindu på noen sekunder, be recovery om å gå **direkte til
+sideload**. Da blir adbd stående og venter i ubestemt tid, uten at menyen tar
+over USB. Dette krever maskrom for å skrive `misc`.
+
+```sh
+# Bygg BCB: command="boot-recovery", recovery="recovery\n--sideload\n"
+printf 'boot-recovery' > /tmp/bcb.bin
+truncate -s 64 /tmp/bcb.bin
+printf 'recovery\n--sideload\n' >> /tmp/bcb.bin
+truncate -s 2048 /tmp/bcb.bin
+xxd /tmp/bcb.bin | head -6          # kontroller før skriving
+
+# Speilet i maskrom, loader lastet:
+gtimeout 60 rkdeveloptool db /path/to/workspace/tools-src/rkbin/rk3399_loader_v1.30.130.bin
+gtimeout 30 rkdeveloptool rfi                       # eneste måte å bekrefte at loaderen kjører
+gtimeout 30 rkdeveloptool rl 32768 4 /tmp/misc_before.bin && xxd /tmp/misc_before.bin | head -4
+gtimeout 60 rkdeveloptool wl 32768 /tmp/bcb.bin
+gtimeout 30 rkdeveloptool rl 32768 4 /tmp/misc_after.bin && cmp /tmp/bcb.bin /tmp/misc_after.bin
+gtimeout 30 rkdeveloptool rl 32772 60 /tmp/misc_rest.bin   # skal være identisk med backupen
+gtimeout 30 rkdeveloptool rd
+```
+
+Så, **før** omstarten er ferdig, ha denne armet og ventende:
+
+```sh
+adb kill-server; adb start-server
+adb wait-for-recovery-device && adb shell 'id; echo ---; getprop ro.build.type; echo ---; ls /dev/block/mapper/; echo ---; mount'
+```
+
+`adb wait-for-recovery-device` fyrer av i samme øyeblikk recovery er oppe, i
+stedet for å polle etterpå. **Første kommando skal bare lese**, ikke endre noe,
+så vi vet hva som er mulig før vi rører data.
+
+Er tilstanden `sideload` og ikke `recovery`, bruk
+`adb wait-for-sideload-device`. Et userdebug-bygg gir ofte `adb shell` også i
+sideload; gir det bare `adb sideload`, er vei A stengt.
+
+### B. Hvis vi får skall i recovery
+
+Følg rapportens kapittel 5:
+
+```sh
+mount /data || mount -t ext4 /dev/block/by-name/userdata /data
+rm -f /data/system/device_owner_2.xml /data/system/device_policies.xml
+# og merk com.mentra.launcher avinstallert for bruker 0 i
+# /data/system/users/0/package-restrictions.xml
+```
+
+**Dette alene holder ikke.** Rapporten er tydelig: APK-en ligger på
+skrivebeskyttet `/odm/bundled_uninstall_back-app/` og setter seg som device
+owner på nytt ved hver oppstart. APK-en må også skjules permanent, med
+`adb remount` (overlayfs) og en whiteout over `/odm`. Sjekk derfor i recovery om
+`/dev/block/mapper/odm` finnes og kan monteres, og om APK-en ligger der
+rapporten sier.
+
+### C. Hvis recovery-adb er stengt: nullstill og kapre første oppstart
+
+Skriv BCB med `recovery\n--wipe_data\n--locale=en_US\n` (som i kapittel 4),
+og ha `adb wait-for-device` armet. Rapporten sier root-adb var tilgjengelig rett
+etter nullstillingen, før kiosk-appen var ferdig provisjonert. Vi fikk aldri
+prøvd dette, fordi macOS blokkerte USB den gangen.
+
+### D. Siste utvei: endre `odm` offline over maskrom
+
+Les `super` (sektor 1379328, lengde 6373376), finn `odm`-ekstentene i
+LP-metadataen, fjern APK-en i ext4-bildet med `debugfs`, skriv tilbake bare de
+berørte sektorene.
+
+**Ikke gjort, og ikke verifisert.** Kjernens kommandolinje har
+`androidboot.veritymode=enforcing`, samtidig som `vbmeta` rapporterer
+verifisering avslått. Det er uavklart om `/odm` er dm-verity-beskyttet. Er den
+det, vil en endring gi en enhet som ikke starter. **Avklar dette før noe skrives:
+les `vbmeta` og se etter en hashtree-deskriptor for `odm`.** Backupen finnes, så
+det er reparerbart, men dette er den dyreste veien.
+
+### E. Rydd opp uansett
+
+Kopier backupen fra `/path/to/backups/original/` til et annet
+sted. Den finnes nå bare på ett sted.
 
 ### Nyttige lesekommandoer
 
@@ -140,9 +246,11 @@ recovery, der kiosk-appen ikke kjører og derfor ikke kan sperre adb. Bygget er
 rkdeveloptool rl 32768 8 misc_now.bin && xxd -a -l 128 misc_now.bin
 # userdata: når ble filsystemet laget? (les 1 MiB, dumpe2fs trenger mer enn superblokken)
 rkdeveloptool rl 7752704 2048 ud.bin && dumpe2fs -h ud.bin | grep -E 'created|Mount count'
+# vbmeta: finnes det en hashtree-deskriptor for odm?
+rkdeveloptool rl 57344 2048 vbmeta.bin && strings vbmeta.bin | head -20
 ```
 
-## 7. Regler vi holder oss til
+## 9. Regler vi holder oss til
 
 - Ingen generisk RK3399-firmware. Panelinnstillingene ligger i speilets egen programvare.
 - Ingen `EraseAll`, og ikke skriving til hele flashen.
