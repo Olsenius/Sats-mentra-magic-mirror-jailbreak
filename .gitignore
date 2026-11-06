@@ -19,3 +19,5 @@ __pycache__/
 Thumbs.db
 # keep the own-artwork logo
 !logo/*.bmp
+# rkdeveloptool writes its own log files into the working directory
+log/
