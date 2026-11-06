@@ -20,6 +20,17 @@ RK3399, Samsung eMMC 59000 MB, serienummer MIRROR_SERIAL.
 
 ### Erfaringer med rkdeveloptool på Mac
 
+- **macOS må få lov til å koble til tilbehøret. Dette kostet oss flere timer.**
+  macOS spør «Tillat at tilbehøret kobles til?» første gang en USB-enhet dukker opp.
+  Varselet kom på Macen, ikke på speilet, og det forsvant av seg selv før det ble
+  besvart. Da ble speilet avvist, og etter det var det **helt usynlig** for Macen:
+  ingenting i `system_profiler SPUSBHostDataType`, ingenting i `ioreg -p IOUSB`,
+  og `rkdeveloptool ld` svarte «not found any devices!». Det ser identisk ut med
+  en død kabel eller et speil som ikke er i maskrom, og vi lette lenge på feil sted.
+  **Fiks:** Systeminnstillinger → Personvern og sikkerhet → «Tillat at tilbehør
+  kobles til» → **Alltid**. Sett den før du begynner, for speilet dukker opp som
+  nytt tilbehør ved hver omstart (maskrom, loader, recovery, Android), og hvert
+  varsel du mister ser ut som maskinvarefeil.
 - **USB-C til USB-C rett i Macen fungerte.** Ingen USB-2.0-hub var nødvendig, i motsetning til rapportens Windows-oppsett. Tilkoblingen kjørte på 480 Mb/s (USB 2.0-hastighet).
 - **Ingen drivere trengs.** `rkdeveloptool` snakker direkte med USB gjennom libusb.
 - **`ld` viser `Maskrom` også etter at loaderen er lastet.** På Mac bytter den ikke til `Loader`, slik rapporten beskriver fra Windows. Den eneste måten å sjekke om loaderen kjører, er å gjøre noe som krever den, for eksempel `rfi`.
@@ -80,31 +91,56 @@ rkdeveloptool wl 32768 misc_head_original.bin
 
 ---
 
-## 5. Hva som skjedde etter omstart (uavklart)
+## 5. Hva som skjedde etter omstart
 
-- Macen så **ingen USB-enhet** på 6 minutter etter omstart. Ingen `adb`, ingenting i USB-treet.
-- På skjermen kom et **språkvalg** (English / Norwegian / Swedish). Oppsettet ble ikke rørt.
-- Mest sannsynlig tolkning, som stemmer med rapportens kapittel 5: nullstillingen kjørte, Android 10 startet rent, og **kiosk-appen installerte seg på nytt fra `/odm` og ble device owner igjen**. Den slår av adb via `DISALLOW_DEBUGGING_FEATURES`, så USB-porten viser seg ikke for Macen.
-- **Dette er ikke bekreftet.** Vi fikk aldri adb, så vi vet ikke sikkert at nullstillingen faktisk kjørte. Rapporten sier at adb var tilgjengelig etter nullstillingen, men ikke hvordan de koblet til, så det er mulig de rakk det i et kort vindu før appen sperret.
+Rett etter omstart: **ingen USB-enhet på Macen**, ingen `adb`. På skjermen kom et
+språkvalg (English / Norwegian / Swedish), og etter det startet speilet i kiosk.
+Vi trodde først at kiosk-appen hadde sperret adb, og deretter at kabelen var død.
+**Begge var feil.** Macen hadde avvist speilet som tilbehør (se kapittel 1), så
+ingenting kunne ses uansett hvilken modus speilet var i.
+
+### Bekreftet i ettertid (lest i maskrom etter at USB-tillatelsen var fikset)
+
+- **Nullstillingen kjørte.** De 4 sektorene vi skrev i `misc` er **nullet ut**
+  igjen; recovery rydder BCB-en etter seg når den har kjørt.
+- **`userdata` er laget på nytt 2026-11-06 07:03:28** (var 2021-11-08), ny UUID,
+  rundt 1,2 GB brukt. Altså et rent filsystem.
+- **Kiosk-appen kom likevel tilbake**, nøyaktig som rapportens kapittel 5 sier:
+  den installerer seg fra skrivebeskyttet `/odm` og blir device owner på nytt.
+  En nullstilling alene er ikke nok.
+- Vi fikk aldri brukt adb-vinduet etter nullstillingen, men det var fordi macOS
+  blokkerte USB, ikke nødvendigvis fordi vinduet var lukket. Rapporten sier at
+  adb (med root) var tilgjengelig her.
 
 ### Der vi står nå
 
-Speilet er satt i maskrom igjen, men **`rkdeveloptool ld` finner ingen enhet**. Macen ser heller ingenting i USB-treet. Dette er uløst.
-
-Ting å prøve:
-1. Strøm helt av, vent 10–15 sekunder, hold knappen inne mens strømmen settes på, og hold i 3–5 sekunder etter.
-2. Prøv en annen kabel, en annen port på Macen, og en USB 2.0-hub mellom.
-3. Sjekk i  → Om denne maskinen → Systemrapport → USB om noe som helst dukker opp.
-4. Kjør `rkdeveloptool ld` flere ganger mens speilet kobles til, for å fange opp et kort vindu.
+`boot-recovery` er skrevet til de samme 4 sektorene i `misc`, **uten**
+`--wipe_data`, og tilbakelest som identisk. Målet er å starte i speilets egen
+recovery, der kiosk-appen ikke kjører og derfor ikke kan sperre adb. Bygget er
+`userdebug`, så recovery bør gi root-adb. Ikke prøvd ennå.
 
 ---
 
-## 6. Neste steg når kontakten er tilbake
+## 6. Neste steg
 
-1. **Les `misc`.** Er de 4 sektorene vi skrev nullet ut, har recovery kjørt og ryddet etter seg. Det bekrefter nullstillingen.
-2. **Les superblokken på `userdata`** (`rkdeveloptool rl 7752704 8`, så `dumpe2fs -h`). Nytt «Filesystem created»-tidspunkt betyr at filsystemet er laget på nytt.
-3. **Start i recovery uten nullstilling:** skriv bare `boot-recovery` (uten `--wipe_data`) til de samme 4 sektorene, og start på nytt. Kiosk-appen kjører ikke i recovery, så den kan ikke sperre adb der. Siden bygget er `userdebug`, bør recovery gi root-adb. Dette er ikke prøvd ennå.
-4. Med adb: følg rapportens kapittel 5, altså slett `/data/system/device_owner_2.xml` og `device_policies.xml`, merk `com.mentra.launcher` avinstallert for bruker 0 i `package-restrictions.xml`, og skjul APK-en på `/odm` med en overlay (`adb remount` + whiteout).
+1. **Start speilet** (vanlig oppstart, ikke maskrom). BCB-en i `misc` sender det
+   til recovery. Se etter `recovery` i `adb devices`.
+2. **Virker ikke recovery-adb:** start normalt i stedet og se om adb dukker opp nå
+   som macOS slipper USB gjennom. Vinduet er sannsynligvis rett etter en
+   nullstilling, før kiosk-appen er ferdig provisjonert.
+3. **Med adb:** følg rapportens kapittel 5, altså slett
+   `/data/system/device_owner_2.xml` og `device_policies.xml`, merk
+   `com.mentra.launcher` avinstallert for bruker 0 i `package-restrictions.xml`,
+   og skjul APK-en på `/odm` med en overlay (`adb remount` + whiteout).
+
+### Nyttige lesekommandoer
+
+```sh
+# misc: er BCB-en vår konsumert?
+rkdeveloptool rl 32768 8 misc_now.bin && xxd -a -l 128 misc_now.bin
+# userdata: når ble filsystemet laget? (les 1 MiB, dumpe2fs trenger mer enn superblokken)
+rkdeveloptool rl 7752704 2048 ud.bin && dumpe2fs -h ud.bin | grep -E 'created|Mount count'
+```
 
 ## 7. Regler vi holder oss til
 
