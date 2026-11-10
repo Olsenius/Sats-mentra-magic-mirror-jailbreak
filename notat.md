@@ -270,3 +270,12 @@ rkdeveloptool rl 57344 2048 vbmeta.bin && strings vbmeta.bin | head -20
 - Original og patch ligger foreløpig i `/tmp/mirror-analysis/odm-original-sector.bin` og `odm-patch-sector.bin`; full original finnes i NAS-backupen. For rollback: gjenopprett den opprinnelige sektoren fra verifisert backup etter kontroll av live data.
 - Deretter skrevet verifisert wipe_data-BCB i de første fire misc-sektorene; resten av de første 64 sektorene uendret. Reset sendt, ADB venter.
 - **Eier bekreftet etter omstart: speilet er inne i stock Android.** Deaktivering av installasjonskilden i `/odm` etterfulgt av nullstilling ga vanlig Android i stedet for Mentra-oppsettet. Device-owner-status og varighet gjennom en ny kaldoppstart er ennå ikke kontrollert.
+
+## 11. Bekreftet nettverks-ADB og gjennomgang av Android 13
+
+- `adb connect 192.0.2.10:5555` lyktes. Android 10, `sys.boot_completed=1`, ADB som uid 2000 (shell).
+- `pm list packages com.mentra` ga ingen pakker; `dumpsys device_policy` viste ingen aktive administratorer/device owner. Mentra-låsen er dermed fjernet i nåværende oppstart. Kaldoppstart er ennå ikke testet.
+- Repoets Android 13-løp: kapittel 7 (modifisert offisiell arm64 A/B GSI, DSU-test først), deretter kapittel 11 (permanent system i to extents i super, LP-metadata sist, tilbakelesing og rollback-slice).
+- Bygg krever Linux med loop-mount og SELinux-xattrs; build-skriptene har hardkodede `/root/a13` og placeholder-stier. Flash-skriptene har forfatterens image-/metadata-hasher og skal ikke kjøres uendret på vårt speil.
+- GSI og ferdig system-image følger ikke repoet. Nytt bilde må anskaffes fra offisiell kilde, tilpasses og verifiseres før DSU-test. Ingen Android 13-image er lastet ned eller skrevet i denne gjennomgangen.
+- Vår odm er nå endret med én sektor. Fremtidige hash-sjekker må sammenligne mot den verifiserte patchen, ikke kreve original odm-hash fra forfatterens speil.
