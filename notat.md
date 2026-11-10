@@ -310,3 +310,16 @@ rkdeveloptool rl 57344 2048 vbmeta.bin && strings vbmeta.bin | head -20
 - Ingen com.mentra-pakker og ingen aktive device-adminer/device owner i dumpsys.
 - Skjerm 1080x1920, density 240.
 - Permanent Android 13 i super er fortsatt ikke installert. Vanlig ny omstart kan returnere til Android 10; videre permanent installasjon må følge egne kontroller og rollback-oppsett i kapittel 11 i rapporten.
+
+## 13. Permanent Android 13: skrivefasen fullført (2026-11-10)
+
+- Brukeren ba uttrykkelig om permanent installasjon etter vellykket DSU-test.
+- Live super-head identisk med backup, SHA256 `7a551ebb5fad13105315003705a7f31a368c812dbd0607ef91cdd417c7a4ef9d`. DSU-kilden `/dev/block/mapper/system_gsi` er read-only og har SHA256 `e1634afb6493499ce5d6d4affc6cea788de53deb814c2670561b764c3b918568`.
+- Rollback-slice: 940544000 byte (super-sektor 0–1836999), SHA256 `56b6f425da724552fc7451f82268f41a601d4808df88aada6c0764a37ef8fdef`, matcher live original systemregion + metadata før skriving.
+- System: 4869440 sektorer, extent A 1834952 @ 2048, extent B 3034488 @ 2930688, relativt til super. Ny metadata godkjent av enhetens lpdump før skriving.
+- Tilpasset stage1 brukte read-only DSU-blokken direkte, i stedet for ny stor nettverksoverføring. Extent B skrevet og tilbakelest først: `d638e51f406c4025c236220f1a23d94bae8113aaf9ec2f77d107cdd4ccb63b22`; A deretter: `a3a24173c436c98199e7a0f353720dceed165c48ab50298e4dbfd8cd4d880cc8`.
+- Ny dm-linear mapping hash stemmer med hele Android 13-bildet; read-only mount viste Android 13. Sammenhengende område fra super-sektor 1837056 til 2930687 (vendor/product/odm + mellomrom) hashet før og etter: uendret. Stage1 OK.
+- Stage2 skrev første MiB av super, hash `ef43d6fb000dd59455447c419325ec25c1ea045ece56f40682d9597661775eb0`; tilbakelesing stemmer og lpdump viser riktig layout.
+- Recovery wipe-BCB skrevet til første fire misc-sektorer etter kontroll av tom BCB; tilbakelest lik og nabosektorene uendret. `adb reboot recovery` sendt for nullstilling av data/DSU og første permanente oppstart.
+- Rollback-slice, metadata før/etter, lokale flash-skript, stage1-logg og BCB-filer lagret i `/path/to/backups/android13-migration/`.
+- **Permanent oppstart uten DSU er bekreftet.** Etter at eier koblet til Wi-Fi igjen: Android 13 `TQ3A.230805.001.A3`, `sys.boot_completed=1`, `gsi_tool status=normal`, `/dev/block/dm-0` montert read-only på `/`, og permanent systempartisjon på 2493153280 byte. Root-ADB virker på samme IP. Ingen com.mentra-pakker eller aktive device-adminer/device owner. En ekstra kaldoppstart er ikke testet.
