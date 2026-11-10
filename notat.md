@@ -257,3 +257,16 @@ rkdeveloptool rl 57344 2048 vbmeta.bin && strings vbmeta.bin | head -20
 - Rør ikke `uboot`, `trust`, `parameter` eller `boot`.
 - Alt som skrives: les tilbake og sammenlign, og sjekk at nabområdene er urørt.
 - Usikker på en offset? Stopp.
+
+## 10. Oppfølging 2026-11-10: offline deaktivering av installasjonskilden
+
+- Factory reset med ADB ventende ga fortsatt ingen USB/ADB; Mentra kom tilbake.
+- Viktig: `db` kan få timeout selv når loaderen har startet. Direkte `rfi` bekreftet Samsung 120832000 sektorer etter timeout. Ikke last loader på nytt uten å sjekke `rfi`.
+- Backupens vbmeta: Algorithm NONE, Flags 2, ingen deskriptorer. Live vbmeta ble sammenlignet byte for byte med backupen.
+- Live LP-metadata (første MiB av super) og hele odm ble sammenlignet med backupen: identiske.
+- odm: 40408 sektorer fra absolutt LBA 4267008 (super 1379328 + extent 2887680).
+- Endret bare katalogoppføringen i odm-blokk 15: `com.mentra.launcher.apk` → `com.mentra.launcher.off`. Filinnhold og inode beholdes. Én sektor skrevet: absolutt LBA **4267128**.
+- Hele odm lest tilbake etter skriving: identisk med forberedt bilde, alle øvrige byte uendret. `e2fsck -fn` består.
+- Original og patch ligger foreløpig i `/tmp/mirror-analysis/odm-original-sector.bin` og `odm-patch-sector.bin`; full original finnes i NAS-backupen. For rollback: gjenopprett den opprinnelige sektoren fra verifisert backup etter kontroll av live data.
+- Deretter skrevet verifisert wipe_data-BCB i de første fire misc-sektorene; resten av de første 64 sektorene uendret. Reset sendt, ADB venter.
+- **Eier bekreftet etter omstart: speilet er inne i stock Android.** Deaktivering av installasjonskilden i `/odm` etterfulgt av nullstilling ga vanlig Android i stedet for Mentra-oppsettet. Device-owner-status og varighet gjennom en ny kaldoppstart er ennå ikke kontrollert.
