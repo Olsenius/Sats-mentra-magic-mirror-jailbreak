@@ -279,3 +279,34 @@ rkdeveloptool rl 57344 2048 vbmeta.bin && strings vbmeta.bin | head -20
 - Bygg krever Linux med loop-mount og SELinux-xattrs; build-skriptene har hardkodede `/root/a13` og placeholder-stier. Flash-skriptene har forfatterens image-/metadata-hasher og skal ikke kjøres uendret på vårt speil.
 - GSI og ferdig system-image følger ikke repoet. Nytt bilde må anskaffes fra offisiell kilde, tilpasses og verifiseres før DSU-test. Ingen Android 13-image er lastet ned eller skrevet i denne gjennomgangen.
 - Vår odm er nå endret med én sektor. Fremtidige hash-sjekker må sammenligne mot den verifiserte patchen, ikke kreve original odm-hash fra forfatterens speil.
+
+## 12. Android 13 DSU-bygg i Docker (2026-11-10, pågår)
+
+- Root bekreftet med `su 0 id` (denne su-varianten støtter ikke `su -c`).
+- Docker Desktop Linux; container `mirror-a13-builder` (privileged for loop-mount), volum `mirror-a13-work` montert på `/root/a13`. Repo montert read-only på `/repo`.
+- Offisiell AOSP ARM64 GSI TQ3A.230805.001.A3, arkiv `aosp_arm64-exp-TQ3A.230805.001.A3-10454027-66e107ed.zip`, fra Googles GSI-utgivelsesside.
+- Arkivets SHA256 kontrollert mot Google: `66e107edaf84b74ba1572be9a4216bf7ae45b3b7f0b516ba2b7aa365ba763905`.
+- Kjørte `build/a13-build1.sh` i container; vendor CIL hentet fra vår verifiserte vendor-backup. Tilpasset `build/a13-mod.sh` med denne filstien. 1820 typer gjort permissive som repoets kompatibilitetsmetode; SELinux-xattrs kontrollert bevart.
+- Brukte dagens `device/etc/{dbg_log.sh,mirror_setup.sh,tw_daemon.sh,init/zz_dbg.rc}` fremfor eldre innebygde kopier i byggeskriptene. Kamera beholder VPU-tilgang som i oppdatert repo.
+- Lagt til `persist.adb.tcp.port=5555` og `service.adb.tcp.port=5555` for nettverks-ADB under DSU-test. Repoets bring-up-oppsett bruker root-ADB uten autentisering og permissive SELinux-domener.
+- `e2fsck -fy`, krymping, 64 MiB slakk og avsluttende `e2fsck -fn` består. Ferdig image: 2493153280 byte, SHA256 `e1634afb6493499ce5d6d4affc6cea788de53deb814c2670561b764c3b918568`.
+- Docker-image: `/root/a13/system_new.img`; vertskopi `/tmp/mirror-analysis/android13-dsu.img`, gzip-kopi ved siden av. Tilpasset byggesekvens foreløpig `/tmp/mirror-analysis/prepare-dsu.sh` (siste fsck/shrink kjørt separat etter at resize2fs krevde skrivende fsck).
+- Overføring av gzip-image til `/data/local/tmp/android13-dsu.img.gz` pågår. DSU ikke installert eller startet ennå; permanent system i super urørt av Android 13-arbeidet.
+
+### DSU installert og testoppstart sendt
+
+- Gzip-overføring fullført, 1085612675 byte. Pakket ut på speilet; SHA256 identisk med Docker-bygget.
+- Installert med root `gsi_tool install --gsi-size 2493153280 --userdata-size 8589934592 --no-reboot`. Android 10-verktøyet bruker fd 1 som bildestrøm; fd 0 og 1 ble åpnet read-only mot image-filen.
+- `/data/gsi/dsu/system_gsi.img.0000` kontrollert med SHA256: identisk med bildet. Feilloggen var tom.
+- `gsi_tool status` viste installed/disabled. AOSP Android 10-koden forklarer dette før første oppstart: install_status inneholdt `0`, one_shot_boot `1`; setGsiBootable hadde allerede klargjort engangsoppstarten. Et ekstra enable-forsøk svarte «not currently disabled» og endret ikke dette.
+- `adb reboot` sendt for første DSU-test. Android 13-oppstart, skjerm og nettverks-ADB er ennå ikke bekreftet. DSU-data er separate; Wi-Fi kan måtte settes opp manuelt. Permanent Android 13-flashing er ikke utført.
+
+### Android 13 DSU-test bekreftet
+
+- Eier bekreftet Android 13 på skjermen og koblet til samme Wi-Fi, samme IP.
+- Nettverks-ADB på `192.0.2.10:5555` fungerer; `id` viser uid 0 (root).
+- Android 13, build `TQ3A.230805.001.A3`, `sys.boot_completed=1`.
+- `gsi_tool status`: running, installed, disabled. Running bekrefter DSU-gjesten; disabled er forenlig med engangsoppstart og betyr at testen ikke er gjort permanent.
+- Ingen com.mentra-pakker og ingen aktive device-adminer/device owner i dumpsys.
+- Skjerm 1080x1920, density 240.
+- Permanent Android 13 i super er fortsatt ikke installert. Vanlig ny omstart kan returnere til Android 10; videre permanent installasjon må følge egne kontroller og rollback-oppsett i kapittel 11 i rapporten.
